@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -22,6 +23,7 @@ func main() {
 	flag.Parse()
 	hub := newHub()
 	go hub.run()
+	fmt.Println("a")
 	http.HandleFunc("/ws/pubsub", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})

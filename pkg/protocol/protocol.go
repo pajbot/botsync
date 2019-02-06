@@ -7,26 +7,34 @@ import "encoding/json"
 // "PUBLISH"
 
 type BaseMessage struct {
-	Type string
+	Type  string
+	Topic string
 
 	Data json.RawMessage
 }
 
-type SubscribeMessageData struct {
+type SubscribeMessage struct {
+	Type  string
 	Topic string
 }
 
-type SubscribeMessage struct {
-	Type string
-	Data SubscribeMessageData
-}
-
 type PublishMessageData struct {
-	Topic   string
 	Payload string
 }
 
 type PublishMessage struct {
-	Type string
+	Type  string
+	Topic string
+
 	Data PublishMessageData
+}
+
+// PongMessage is a response to { "Type": "Publish", "Topic": "PING" }
+type PongMessage struct {
+	Type  string // always PUBLISH
+	Topic string // always PONG
+
+	Data struct {
+		Message string
+	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/pajlada/botsync/pkg/protocol"
 )
@@ -64,13 +65,7 @@ func (h *Hub) run() {
 		case message := <-h.process:
 			switch message.Type {
 			case "SUBSCRIBE":
-				data := &protocol.SubscribeMessageData{}
-				err := json.Unmarshal(message.Data, data)
-				if err != nil {
-					fmt.Println("err:", err)
-					continue
-				}
-				h.subscribe(message.source, data.Topic)
+				h.subscribe(message.source, message.Topic)
 
 			case "PUBLISH":
 				data := &protocol.PublishMessageData{}
@@ -79,7 +74,9 @@ func (h *Hub) run() {
 					fmt.Println("err:", err)
 					continue
 				}
-				h.publish(message.source, data.Topic, data.Payload)
+
+				h.handlePublish(message.source, message.Topic, data.Payload)
+				// h.publish(message.source, message.Topic, data.Payload)
 
 			default:
 				fmt.Println("Received message to process:", message)
@@ -115,8 +112,35 @@ func (h *Hub) publish(client *Client, topic string, data interface{}) {
 		return
 	}
 
+	payload, err := json.Marshal(data)
+	if err != nil {
+		log.Println("Error marshalling data:", err)
+		return
+	}
+
+	msg := &protocol.PublishMessage{
+		Type: "PUBLISH",
+		Data: protocol.PublishMessageData{
+			Topic:   topic,
+			Payload: string(payload),
+		},
+	}
+
+	bytes, err := json.Marshal(msg)
+	if err != nil {
+		log.Println("Error marshalling msg:", err)
+		return
+	}
+
 	for _, listener := range listeners {
 		// TODO: check error
-		listener.send <- []byte("xd")
+		listener.send <- bytes
+	}
+}
+
+func (h *Hub) handlePublish(client *Client, topic string, data interface{}) {
+	switch topic {
+	case "ping":
+		// Response to this client only with a pong message
 	}
 }
