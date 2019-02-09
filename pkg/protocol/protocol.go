@@ -6,35 +6,59 @@ import "encoding/json"
 // "SUBSCRIBE"
 // "PUBLISH"
 
-type BaseMessage struct {
+type Message struct {
 	Type  string
 	Topic string
 
-	Data json.RawMessage
+	Data json.RawMessage `json:",omitempty"`
 }
 
-type SubscribeMessage struct {
-	Type  string
-	Topic string
-}
-
-type PublishMessageData struct {
-	Payload string
-}
-
-type PublishMessage struct {
+type OutgoingMessage struct {
 	Type  string
 	Topic string
 
-	Data PublishMessageData
+	Data interface{} `json:",omitempty"`
 }
 
-// PongMessage is a response to { "Type": "Publish", "Topic": "PING" }
-type PongMessage struct {
-	Type  string // always PUBLISH
-	Topic string // always PONG
+func NewSubscribeMessage(topic string, parameters interface{}) *OutgoingMessage {
+	return &OutgoingMessage{
+		Type:  "SUBSCRIBE",
+		Topic: topic,
 
-	Data struct {
-		Message string
+		Data: parameters,
+	}
+}
+
+func NewPingMessage() *Message {
+	return &Message{
+		Type:  "PUBLISH",
+		Topic: "ping",
+	}
+}
+
+func NewPongMessage() *Message {
+	return &Message{
+		Type:  "PUBLISH",
+		Topic: "pong",
+	}
+}
+
+// prebaked messages
+var (
+	PingBytes []byte
+	PongBytes []byte
+)
+
+func init() {
+	var err error
+
+	PingBytes, err = json.Marshal(NewPingMessage())
+	if err != nil {
+		panic(err)
+	}
+
+	PongBytes, err = json.Marshal(NewPongMessage())
+	if err != nil {
+		panic(err)
 	}
 }

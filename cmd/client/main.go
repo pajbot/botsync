@@ -11,9 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/pajlada/botsync/pkg/client"
 	"github.com/pajlada/botsync/pkg/protocol"
 )
 
@@ -24,8 +23,6 @@ var (
 
 	interrupt = make(chan os.Signal, 1)
 
-	subscribe = make(chan string)
-	publish   = make(chan interface{})
 	reconnect = make(chan bool)
 	doQuit    = make(chan bool)
 	input     = make(chan string)
@@ -35,106 +32,58 @@ var (
 	text string
 )
 
-func connect(u url.URL) error {
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		for {
-			_, message, err := c.ReadMessage()
-			if err != nil {
-				log.Println("read:", err)
-				return
-			}
-			log.Printf("Received message: %s", message)
-		}
-	}()
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	ticker2 := time.NewTicker(3 * time.Second)
-	defer ticker2.Stop()
-
-	for {
-		select {
-		case <-done:
-			return errors.New("xd")
-		case msg := <-publish:
-			payload, err := json.Marshal(msg)
-			err = c.WriteMessage(websocket.TextMessage, payload)
-			if err != nil {
-				log.Println("write:", err)
-				return err
-			}
-		case topic := <-subscribe:
-			msg := &protocol.SubscribeMessage{
-				Type:  "SUBSCRIBE",
-				Topic: topic,
-			}
-			payload, err := json.Marshal(msg)
-			err = c.WriteMessage(websocket.TextMessage, payload)
-			if err != nil {
-				log.Println("write:", err)
-				return err
-			}
-		case <-interrupt:
-			log.Println("interrupt")
-
-			// Cleanly close the connection by sending a close message and then
-			// waiting (with timeout) for the server to close the connection.
-			err := c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-			if err != nil {
-				log.Println("write close:", err)
-				return err
-			}
-			select {
-			case <-done:
-			case <-time.After(time.Second):
-			}
-			return errQuit
-		}
-	}
-}
-
 func penis() error {
-	go func() {
-		err := connect(u)
-		if err != nil {
-			if err == errQuit {
-				log.Println("quitting on demand")
-				doQuit <- true
-				return
-			}
-
-			log.Println("connect error:", err)
-			time.AfterFunc(time.Second*1, func() {
-				reconnect <- true
-			})
+	c := client.NewClient(u.String())
+	c.OnMessage(func(message *protocol.Message) {
+		switch message.Topic {
+		case "afk":
+			parameters := &protocol.AFKParameters{}
+			json.Unmarshal(message.Data, parameters)
+			fmt.Println("Received AFK update:", parameters)
+		default:
+			fmt.Println("Got message for unhandled topic:", message.Topic)
 		}
+	})
+	go func() {
+		err := c.Connect()
+		fmt.Println("connect ended:", err)
+		doQuit <- true
 	}()
 
 	for {
 		select {
+		case <-interrupt:
+			c.Disconnect()
 		case text := <-input:
-			fmt.Println("read:", text)
-			switch text {
-			case "subscribe":
-				subscribe <- "test"
-			case "publish":
-				publish <- &protocol.PublishMessage{
-					Type:  "PUBLISH",
-					Topic: "test",
-					Data: protocol.PublishMessageData{
-						Payload: "lol",
-					},
+			parts := strings.Split(text, " ")
+			switch parts[0] {
+			case "afksubscribe":
+				channelID := "11148817"
+				if len(parts) >= 2 {
+					channelID = parts[1]
 				}
+				c.Send(protocol.NewAFKSubscribeMessage(channelID))
+			case "publish":
+				// publish <- &protocol.PublishMessage{
+				// 	Type:  "PUBLISH",
+				// 	Topic: "test",
+				// 	Data: protocol.PublishMessageData{
+				// 		Payload: "lol",
+				// 	},
+				// }
+			case "ping":
+				c.Send(protocol.NewPingMessage())
+			case "afk":
+				if len(parts) < 2 {
+					log.Println("Unsufficient arguments to afk")
+					continue
+				}
+				var reason string
+				username := parts[1]
+				if len(parts) >= 3 {
+					reason = strings.Join(parts[2:], " ")
+				}
+				c.Send(protocol.NewAFKMessage(username, reason))
 			default:
 				log.Println("unhandled text:", text)
 			}

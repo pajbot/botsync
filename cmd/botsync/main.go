@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -12,16 +13,93 @@ import (
 )
 
 type SourceMessage struct {
-	protocol.BaseMessage
+	protocol.Message
 
 	source *Client
 }
 
 var host = flag.String("host", ":8080", "listen host")
 
+func handlePing(client *Client, unparsedData json.RawMessage) error {
+	client.send <- protocol.PongBytes
+	return nil
+}
+
+type AFKDatabase struct {
+	hub *Hub
+
+	users map[string]*protocol.AFKParameters
+}
+
+func (d *AFKDatabase) setAFK(client *Client, unparsedData json.RawMessage) error {
+	var parameters protocol.AFKParameters
+	_ = json.Unmarshal(unparsedData, &parameters)
+
+	if _, ok := d.users[parameters.UserID]; ok {
+		// User is already AFK
+		return nil
+	}
+
+	d.users[parameters.UserID] = &parameters
+
+	outboundMessage := &protocol.OutgoingMessage{
+		Type:  "PUBLISH",
+		Topic: "afk",
+		Data:  parameters,
+	}
+
+	go d.hub.publish(outboundMessage)
+
+	return nil
+}
+
+func (d *AFKDatabase) setBack(client *Client, unparsedData json.RawMessage) error {
+	var setParameters protocol.BackSetParameters
+	_ = json.Unmarshal(unparsedData, &setParameters)
+
+	afkParameters, ok := d.users[setParameters.UserID]
+	if !ok {
+		// User was not AFK to begin with
+		return nil
+	}
+	delete(d.users, setParameters.UserID)
+
+	parameters := protocol.BackParameters{
+		UserID:   setParameters.UserID,
+		UserName: setParameters.UserName,
+
+		ChannelID:   setParameters.ChannelID,
+		ChannelName: setParameters.ChannelName,
+
+		Reason: afkParameters.Reason,
+
+		AFKChannelID:   afkParameters.ChannelID,
+		AFKChannelName: afkParameters.ChannelName,
+	}
+
+	outboundMessage := &protocol.OutgoingMessage{
+		Type:  "PUBLISH",
+		Topic: "back",
+		Data:  parameters,
+	}
+	go d.hub.publish(outboundMessage)
+
+	return nil
+}
+
 func main() {
 	flag.Parse()
 	hub := newHub()
+
+	afkDatabase := AFKDatabase{
+		hub:   hub,
+		users: make(map[string]*protocol.AFKParameters),
+	}
+
+	hub.publishHandlers["ping"] = handlePing
+	hub.publishHandlers["afk.set"] = afkDatabase.setAFK
+	hub.publishHandlers["back.set"] = afkDatabase.setBack
+
 	go hub.run()
 	fmt.Println("a")
 	http.HandleFunc("/ws/pubsub", func(w http.ResponseWriter, r *http.Request) {

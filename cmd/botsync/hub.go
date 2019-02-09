@@ -8,6 +8,16 @@ import (
 	"github.com/pajlada/botsync/pkg/protocol"
 )
 
+type SubscriptionParameter interface {
+	Matches(interface{}) bool
+}
+
+type Subscription struct {
+	client *Client
+
+	parameters SubscriptionParameter
+}
+
 // Hub maintains the set of active clients and broadcasts messages to the
 // clients.
 type Hub struct {
@@ -17,27 +27,27 @@ type Hub struct {
 	// Inbound messages from the clients.
 	process chan *SourceMessage
 
-	// Inbound messages from the clients.
-	broadcast chan []byte
-
 	// Register requests from the clients.
 	register chan *Client
 
 	// Unregister requests from clients.
 	unregister chan *Client
 
-	subscriptions map[string][]*Client
+	subscriptions map[string][]*Subscription
+
+	publishHandlers map[string]func(client *Client, unparsedData json.RawMessage) error
 }
 
 func newHub() *Hub {
 	return &Hub{
 		process:    make(chan *SourceMessage),
-		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
 
-		subscriptions: make(map[string][]*Client),
+		subscriptions: make(map[string][]*Subscription),
+
+		publishHandlers: make(map[string]func(client *Client, unparsedData json.RawMessage) error),
 	}
 }
 
@@ -50,7 +60,7 @@ func (h *Hub) run() {
 		case client := <-h.unregister:
 			for topic := range client.subscriptions {
 				for i, topicSubscription := range h.subscriptions[topic] {
-					if topicSubscription == client {
+					if topicSubscription.client == client {
 						copy(h.subscriptions[topic][i:], h.subscriptions[topic][i+1:])
 						h.subscriptions[topic][len(h.subscriptions[topic])-1] = nil // or the zero vh.subscriptions[topic]lue of T
 						h.subscriptions[topic] = h.subscriptions[topic][:len(h.subscriptions[topic])-1]
@@ -65,82 +75,79 @@ func (h *Hub) run() {
 		case message := <-h.process:
 			switch message.Type {
 			case "SUBSCRIBE":
-				h.subscribe(message.source, message.Topic)
+				err := h.handleSubscribe(message)
+				if err != nil {
+					fmt.Println("Error handling subscription:", err)
+				}
 
 			case "PUBLISH":
-				data := &protocol.PublishMessageData{}
-				err := json.Unmarshal(message.Data, data)
-				if err != nil {
-					fmt.Println("err:", err)
-					continue
-				}
-
-				h.handlePublish(message.source, message.Topic, data.Payload)
-				// h.publish(message.source, message.Topic, data.Payload)
-
-			default:
-				fmt.Println("Received message to process:", message)
-			}
-
-		case message := <-h.broadcast:
-			fmt.Println("Received message:", string(message))
-			for client := range h.clients {
-				select {
-				case client.send <- message:
-				default:
-					close(client.send)
-					delete(h.clients, client)
-				}
+				h.handlePublish(message.source, message.Topic, message.Data)
 			}
 		}
 	}
 }
 
-func (h *Hub) subscribe(client *Client, topic string) {
+func (h *Hub) subscribe(client *Client, topic string, parameters SubscriptionParameter) {
+	// TODO: Ensure the client is not subscribed with the same parameters already
 	if _, ok := client.subscriptions[topic]; ok {
 		return
 	}
-	fmt.Println("Subscribed to", topic)
 
 	client.subscriptions[topic] = true
-	h.subscriptions[topic] = append(h.subscriptions[topic], client)
+	h.subscriptions[topic] = append(h.subscriptions[topic], &Subscription{
+		client:     client,
+		parameters: parameters,
+	})
 }
 
-func (h *Hub) publish(client *Client, topic string, data interface{}) {
-	listeners, ok := h.subscriptions[topic]
-	if !ok {
-		return
+func (h *Hub) handleSubscribe(message *SourceMessage) error {
+	var parameters SubscriptionParameter
+	switch message.Topic {
+	case "afk":
+		messageParameters := &protocol.AFKSubscribeParameters{}
+		err := json.Unmarshal(message.Data, messageParameters)
+		if err != nil {
+			return err
+		}
+		parameters = messageParameters
+	case "back":
+		messageParameters := &protocol.BackSubscribeParameters{}
+		err := json.Unmarshal(message.Data, messageParameters)
+		if err != nil {
+			return err
+		}
+		parameters = messageParameters
 	}
+	h.subscribe(message.source, message.Topic, parameters)
 
-	payload, err := json.Marshal(data)
-	if err != nil {
-		log.Println("Error marshalling data:", err)
-		return
-	}
-
-	msg := &protocol.PublishMessage{
-		Type: "PUBLISH",
-		Data: protocol.PublishMessageData{
-			Topic:   topic,
-			Payload: string(payload),
-		},
-	}
-
-	bytes, err := json.Marshal(msg)
-	if err != nil {
-		log.Println("Error marshalling msg:", err)
-		return
-	}
-
-	for _, listener := range listeners {
-		// TODO: check error
-		listener.send <- bytes
-	}
+	return nil
 }
 
-func (h *Hub) handlePublish(client *Client, topic string, data interface{}) {
-	switch topic {
-	case "ping":
-		// Response to this client only with a pong message
+func (h *Hub) handlePublish(client *Client, topic string, unparsedData json.RawMessage) error {
+	if cb, ok := h.publishHandlers[topic]; ok {
+		return cb(client, unparsedData)
 	}
+
+	log.Println("Unhandled topic", topic)
+	return errUnhandledTopic
+}
+
+func (h *Hub) publish(message *protocol.OutgoingMessage) error {
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+
+	if subscriptions, ok := h.subscriptions[message.Topic]; ok {
+		for _, subscription := range subscriptions {
+			if subscription.parameters != nil {
+				if !subscription.parameters.Matches(message.Data) {
+					continue
+				}
+			}
+			subscription.client.send <- payload
+		}
+	}
+
+	return nil
 }
