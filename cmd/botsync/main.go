@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -117,8 +118,9 @@ func main() {
 
 	go hub.run()
 	http.HandleFunc("/ws/pubsub", func(w http.ResponseWriter, r *http.Request) {
-		serveWs(hub, w, r)
+		serveWs(hub, w, r, db)
 	})
+	fmt.Println("Listening on", *host)
 	err = http.ListenAndServe(*host, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
@@ -150,22 +152,31 @@ var upgrader = websocket.Upgrader{
 }
 
 // serveWs handles websocket requests from the peer.
-func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	client := &Client{
-		hub:           hub,
-		conn:          conn,
-		send:          make(chan []byte, 256),
-		subscriptions: make(map[string]bool),
-	}
-	client.hub.register <- client
 
-	// Allow collection of memory referenced by the caller by doing all work in
-	// new goroutines.
-	go client.writePump()
-	go client.readPump()
+	client := newClient(hub, conn)
+
+	go func(client *Client) {
+		done := client.authenticate(db)
+
+		select {
+		case status := <-done:
+			if status {
+				client.start()
+				fmt.Println("["+client.conn.RemoteAddr().String()+"] success auth with id", client.twitchUserID)
+				return
+			}
+
+			fmt.Println("["+client.conn.RemoteAddr().String()+"] failed auth with id", client.twitchUserID)
+		case <-time.After(5 * time.Second):
+			fmt.Println("timed out")
+		}
+
+		client.disconnect()
+	}(client)
 }

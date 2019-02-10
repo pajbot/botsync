@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/pajlada/botsync/pkg/protocol"
 )
@@ -33,7 +34,8 @@ type Hub struct {
 	// Unregister requests from clients.
 	unregister chan *Client
 
-	subscriptions map[string][]*Subscription
+	subscriptionsMutex sync.Mutex
+	subscriptions      map[string][]*Subscription
 
 	publishHandlers map[string]func(client *Client, unparsedData json.RawMessage) error
 }
@@ -58,6 +60,9 @@ func (h *Hub) run() {
 			h.clients[client] = true
 
 		case client := <-h.unregister:
+			h.subscriptionsMutex.Lock()
+			defer h.subscriptionsMutex.Unlock()
+
 			for topic := range client.subscriptions {
 				for i, topicSubscription := range h.subscriptions[topic] {
 					if topicSubscription.client == client {
@@ -94,6 +99,9 @@ func (h *Hub) subscribe(client *Client, topic string, parameters SubscriptionPar
 	}
 
 	client.subscriptions[topic] = true
+
+	h.subscriptionsMutex.Lock()
+	defer h.subscriptionsMutex.Unlock()
 	h.subscriptions[topic] = append(h.subscriptions[topic], &Subscription{
 		client:     client,
 		parameters: parameters,
@@ -138,6 +146,8 @@ func (h *Hub) publish(message *protocol.OutgoingMessage) error {
 		return err
 	}
 
+	h.subscriptionsMutex.Lock()
+	defer h.subscriptionsMutex.Unlock()
 	if subscriptions, ok := h.subscriptions[message.Topic]; ok {
 		for _, subscription := range subscriptions {
 			if subscription.parameters != nil {

@@ -3,7 +3,7 @@ package client
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -12,6 +12,8 @@ import (
 
 var (
 	ErrDisconnected = errors.New("client disconnected")
+
+	ErrAuthenticationFailed = errors.New("authentication failed")
 )
 
 type Client struct {
@@ -20,6 +22,8 @@ type Client struct {
 
 	disconnect chan bool
 	send       chan interface{}
+
+	authentication protocol.Authentication
 
 	onMessage func(message *protocol.Message)
 	onConnect func()
@@ -33,6 +37,10 @@ func NewClient(host string) *Client {
 	}
 }
 
+func (c *Client) SetAuthentication(authentication protocol.Authentication) {
+	c.authentication = authentication
+}
+
 func (c *Client) OnMessage(cb func(message *protocol.Message)) {
 	c.onMessage = cb
 }
@@ -41,16 +49,54 @@ func (c *Client) OnConnect(cb func()) {
 	c.onConnect = cb
 }
 
+func (c *Client) authenticate() error {
+	payload, err := json.Marshal(c.authentication)
+	if err != nil {
+		return err
+	}
+
+	if err = c.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Client) readAuthenticationResponse() error {
+	_, rawMessage, err := c.conn.ReadMessage()
+	if err != nil {
+		return err
+	}
+
+	var msg protocol.AuthenticationResponse
+	err = json.Unmarshal(rawMessage, &msg)
+	if err != nil {
+		return err
+	}
+
+	if !msg.Success {
+		return ErrAuthenticationFailed
+	}
+
+	return nil
+}
+
 func (c *Client) Connect() error {
 	var err error
 
-	done := make(chan struct{})
+	done := make(chan error)
 
 	c.conn, _, err = websocket.DefaultDialer.Dial(c.host, nil)
 	if err != nil {
 		return err
 	}
 	defer c.conn.Close()
+
+	c.authenticate()
+
+	if err := c.readAuthenticationResponse(); err != nil {
+		return err
+	}
 
 	if c.onConnect != nil {
 		c.onConnect()
@@ -62,14 +108,14 @@ func (c *Client) Connect() error {
 		for {
 			_, message, err := c.conn.ReadMessage()
 			if err != nil {
-				log.Println("read error:", err)
+				done <- err
 				return
 			}
 
 			parsedMessage := &protocol.Message{}
 			err = json.Unmarshal(message, parsedMessage)
 			if err != nil {
-				log.Println("read parse error:", err)
+				done <- err
 				continue
 			}
 			if c.onMessage != nil {
@@ -80,23 +126,23 @@ func (c *Client) Connect() error {
 
 	for {
 		select {
-		case <-done:
-			return errors.New("xd")
+		case err := <-done:
+			return err
 		case msg := <-c.send:
 			payload, err := json.Marshal(msg)
 			err = c.conn.WriteMessage(websocket.TextMessage, payload)
 			if err != nil {
-				log.Println("write:", err)
+				fmt.Println("write:", err)
 				return err
 			}
 		case <-c.disconnect:
-			log.Println("interrupt")
+			fmt.Println("interrupt")
 
 			// Cleanly close the connection by sending a close message and then
 			// waiting (with timeout) for the server to close the connection.
 			err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 			if err != nil {
-				log.Println("write close:", err)
+				fmt.Println("write close:", err)
 				return err
 			}
 			select {
@@ -117,6 +163,6 @@ func (c *Client) Disconnect() {
 	select {
 	case c.disconnect <- true:
 	default:
-		log.Println("unable to disconnect")
+		fmt.Println("unable to disconnect")
 	}
 }

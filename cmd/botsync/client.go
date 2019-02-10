@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/pajlada/botsync/pkg/protocol"
 )
 
 // Client is a middleman between the websocket connection and the hub.
@@ -21,6 +23,81 @@ type Client struct {
 	send chan []byte
 
 	subscriptions map[string]bool
+
+	twitchUserID string
+}
+
+func newClient(hub *Hub, conn *websocket.Conn) *Client {
+	client := &Client{
+		hub:           hub,
+		conn:          conn,
+		send:          make(chan []byte, 256),
+		subscriptions: make(map[string]bool),
+	}
+
+	return client
+}
+
+func (c *Client) start() {
+	c.hub.register <- c
+
+	c.send <- protocol.AuthenticationSuccessBytes
+
+	// Allow collection of memory referenced by the caller by doing all work in
+	// new goroutines.
+	go c.writePump()
+	go c.readPump()
+}
+
+func (c *Client) authenticate(db *sql.DB) chan bool {
+	done := make(chan bool)
+
+	go func() {
+		_, message, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("error: %v", err)
+			}
+			done <- false
+			return
+		}
+		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+
+		var authentication protocol.Authentication
+
+		err = json.Unmarshal(message, &authentication)
+		if err != nil {
+			done <- false
+			return
+		}
+
+		c.twitchUserID = authentication.TwitchUserID
+
+		if c.twitchUserID == "" {
+			done <- false
+			return
+		}
+
+		const query = `SELECT authentication_token FROM client WHERE twitch_user_id=$1`
+		row := db.QueryRow(query, c.twitchUserID)
+		var authToken string
+		err = row.Scan(&authToken)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				fmt.Println("Error during row scan:", err)
+			}
+			done <- false
+			return
+		}
+		done <- authentication.AuthenticationToken == authToken
+	}()
+
+	return done
+}
+
+func (c *Client) disconnect() {
+	c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+	c.conn.Close()
 }
 
 // readPump pumps messages from the websocket connection to the hub.
