@@ -3,13 +3,15 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/pajlada/botsync/internal/config"
+	"github.com/pajlada/botsync/internal/dbhelp"
 	"github.com/pajlada/botsync/pkg/protocol"
 	"github.com/pajlada/stupidmigration"
 
@@ -21,8 +23,6 @@ type SourceMessage struct {
 
 	source *Client
 }
-
-var host = flag.String("host", ":8080", "listen host")
 
 func handlePing(client *Client, unparsedData json.RawMessage) error {
 	client.send <- protocol.PongBytes
@@ -92,17 +92,17 @@ func (d *AFKDatabase) setBack(client *Client, unparsedData json.RawMessage) erro
 }
 
 func main() {
-	flag.Parse()
 	hub := newHub()
 
-	db, err := sql.Open("postgres", "postgres:///botsync?sslmode=disable")
+	db, err := dbhelp.Connect()
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
 	db.SetMaxOpenConns(10)
 
-	err = stupidmigration.Migrate("../../migrations", db)
+	err = stupidmigration.Migrate(config.GetMigrationsPath(), db)
 	if err != nil {
 		log.Fatal("Error running migrations:", err)
 	}
@@ -117,11 +117,11 @@ func main() {
 	hub.publishHandlers["back.set"] = afkDatabase.setBack
 
 	go hub.run()
-	http.HandleFunc("/ws/pubsub", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(config.GetWebsocketPath(), func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r, db)
 	})
-	fmt.Println("Listening on", *host)
-	err = http.ListenAndServe(*host, nil)
+	fmt.Println("Listening on", config.GetHost())
+	err = http.ListenAndServe(config.GetHost(), nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
