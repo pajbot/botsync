@@ -1,15 +1,18 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/pajlada/botsync/pkg/protocol"
+	"github.com/pajlada/stupidmigration"
+
+	_ "github.com/lib/pq"
 )
 
 type SourceMessage struct {
@@ -91,6 +94,18 @@ func main() {
 	flag.Parse()
 	hub := newHub()
 
+	db, err := sql.Open("postgres", "postgres:///botsync?sslmode=disable")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	db.SetMaxOpenConns(10)
+
+	err = stupidmigration.Migrate("../../migrations", db)
+	if err != nil {
+		log.Fatal("Error running migrations:", err)
+	}
+
 	afkDatabase := AFKDatabase{
 		hub:   hub,
 		users: make(map[string]*protocol.AFKParameters),
@@ -101,11 +116,10 @@ func main() {
 	hub.publishHandlers["back.set"] = afkDatabase.setBack
 
 	go hub.run()
-	fmt.Println("a")
 	http.HandleFunc("/ws/pubsub", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
-	err := http.ListenAndServe(*host, nil)
+	err = http.ListenAndServe(*host, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
