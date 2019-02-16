@@ -23,6 +23,9 @@ type BackParameters struct {
 	// Channel the user just came back in
 	ChannelID   string
 	ChannelName string
+
+	// How long the user has been AFK in milliseconds
+	Duration int64
 }
 
 type BackSubscribeParameters struct {

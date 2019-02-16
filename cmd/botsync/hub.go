@@ -37,7 +37,8 @@ type Hub struct {
 	subscriptionsMutex sync.Mutex
 	subscriptions      map[string][]*Subscription
 
-	publishHandlers map[string]func(client *Client, unparsedData json.RawMessage) error
+	publishHandlers   map[string]func(client *Client, unparsedData json.RawMessage) error
+	subscribeHandlers map[string]func(client *Client, parameters SubscriptionParameter) error
 }
 
 func newHub() *Hub {
@@ -49,7 +50,23 @@ func newHub() *Hub {
 
 		subscriptions: make(map[string][]*Subscription),
 
-		publishHandlers: make(map[string]func(client *Client, unparsedData json.RawMessage) error),
+		publishHandlers:   make(map[string]func(client *Client, unparsedData json.RawMessage) error),
+		subscribeHandlers: make(map[string]func(client *Client, parameters SubscriptionParameter) error),
+	}
+}
+
+func (h *Hub) unregisterClient(client *Client) {
+	h.subscriptionsMutex.Lock()
+	defer h.subscriptionsMutex.Unlock()
+
+	for topic := range client.subscriptions {
+		for i, topicSubscription := range h.subscriptions[topic] {
+			if topicSubscription.client == client {
+				copy(h.subscriptions[topic][i:], h.subscriptions[topic][i+1:])
+				h.subscriptions[topic][len(h.subscriptions[topic])-1] = nil // or the zero vh.subscriptions[topic]lue of T
+				h.subscriptions[topic] = h.subscriptions[topic][:len(h.subscriptions[topic])-1]
+			}
+		}
 	}
 }
 
@@ -60,18 +77,8 @@ func (h *Hub) run() {
 			h.clients[client] = true
 
 		case client := <-h.unregister:
-			h.subscriptionsMutex.Lock()
-			defer h.subscriptionsMutex.Unlock()
+			h.unregisterClient(client)
 
-			for topic := range client.subscriptions {
-				for i, topicSubscription := range h.subscriptions[topic] {
-					if topicSubscription.client == client {
-						copy(h.subscriptions[topic][i:], h.subscriptions[topic][i+1:])
-						h.subscriptions[topic][len(h.subscriptions[topic])-1] = nil // or the zero vh.subscriptions[topic]lue of T
-						h.subscriptions[topic] = h.subscriptions[topic][:len(h.subscriptions[topic])-1]
-					}
-				}
-			}
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
@@ -101,15 +108,21 @@ func (h *Hub) subscribe(client *Client, topic string, parameters SubscriptionPar
 	client.subscriptions[topic] = true
 
 	h.subscriptionsMutex.Lock()
-	defer h.subscriptionsMutex.Unlock()
 	h.subscriptions[topic] = append(h.subscriptions[topic], &Subscription{
 		client:     client,
 		parameters: parameters,
 	})
+	h.subscriptionsMutex.Unlock()
+
+	if cb, ok := h.subscribeHandlers[topic]; ok {
+		go cb(client, parameters)
+	}
+
 }
 
 func (h *Hub) handleSubscribe(message *SourceMessage) error {
 	var parameters SubscriptionParameter
+
 	switch message.Topic {
 	case "afk":
 		messageParameters := &protocol.AFKSubscribeParameters{}
@@ -125,7 +138,10 @@ func (h *Hub) handleSubscribe(message *SourceMessage) error {
 			return err
 		}
 		parameters = messageParameters
+	default:
+		return fmt.Errorf("unknown topic %s", message.Topic)
 	}
+
 	h.subscribe(message.source, message.Topic, parameters)
 
 	return nil

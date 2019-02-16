@@ -10,12 +10,16 @@ type Message struct {
 	Type  string
 	Topic string
 
+	Historic bool
+
 	Data json.RawMessage `json:",omitempty"`
 }
 
 type OutgoingMessage struct {
 	Type  string
 	Topic string
+
+	Historic bool
 
 	Data interface{} `json:",omitempty"`
 }
