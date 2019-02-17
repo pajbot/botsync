@@ -40,6 +40,7 @@ func GetWebsocketPath() string {
 func GetDSN() string {
 	const e = `BOTSYNC_DSN`
 	const defaultValue = `postgres:///botsync?sslmode=disable`
+	// const defaultValue = `host=/var/run/postgresql database=botsync sslmode=disable`
 
 	if value, ok := os.LookupEnv(e); ok {
 		return value
