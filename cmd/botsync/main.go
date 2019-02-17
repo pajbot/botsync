@@ -153,6 +153,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	err = db.Ping()
+	if err != nil {
+		fmt.Println("Error connecting to db:", err)
+		os.Exit(1)
+	}
+
 	db.SetMaxOpenConns(10)
 
 	err = stupidmigration.Migrate(config.GetMigrationsPath(), db)
