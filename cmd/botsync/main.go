@@ -80,20 +80,18 @@ func (d *AFKDatabase) setAFK(client *Client, unparsedData json.RawMessage) error
 	return nil
 }
 
-func (d *AFKDatabase) subscribeAFK(client *Client, parameters SubscriptionParameter) error {
+func (d *AFKDatabase) subscribeAFK(client *Client, subscriptionParameters SubscriptionParameter) error {
 	d.usersMutex.Lock()
 	defer d.usersMutex.Unlock()
-	for _, parameters := range d.users {
+	for _, afkUser := range d.users {
 		outboundMessage := &protocol.OutgoingMessage{
 			Type:     "PUBLISH",
 			Topic:    "afk",
 			Historic: true,
-			Data:     parameters,
+			Data:     afkUser.parameters,
 		}
 
 		bytes, _ := json.Marshal(outboundMessage)
-
-		fmt.Println(outboundMessage)
 
 		client.send <- bytes
 	}
