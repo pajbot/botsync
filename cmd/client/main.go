@@ -34,6 +34,10 @@ var (
 
 func penis() error {
 	c := client.NewClient(u.String())
+	c.SetAuthentication(protocol.Authentication{
+		TwitchUserID:        "82008718",
+		AuthenticationToken: "penis",
+	})
 	c.OnMessage(func(message *protocol.Message) {
 		switch message.Topic {
 		case "afk":
@@ -83,7 +87,15 @@ func penis() error {
 				if len(parts) >= 3 {
 					reason = strings.Join(parts[2:], " ")
 				}
-				c.Send(protocol.NewAFKMessage(username, reason))
+				c.Send(protocol.NewAFKMessage(&protocol.AFKParameters{
+					UserID:   "40286300",
+					UserName: username,
+
+					ChannelID:   "11148817",
+					ChannelName: "pajlada",
+
+					Reason: reason,
+				}))
 			default:
 				log.Println("unhandled text:", text)
 			}
