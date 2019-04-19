@@ -1,12 +1,16 @@
-package main
+package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"sync"
+	"time"
 
 	"github.com/pajlada/botsync/pkg/protocol"
+	"github.com/pajlada/pajbot2/pkg/utils"
 )
 
 type SubscriptionParameter interface {
@@ -17,6 +21,31 @@ type Subscription struct {
 	client *Client
 
 	parameters SubscriptionParameter
+}
+
+const (
+	// Time allowed to write a message to the peer.
+	writeWait = 10 * time.Second
+
+	// Time allowed to read the next pong message from the peer.
+	pongWait = 60 * time.Second
+
+	// Send pings to peer with this period. Must be less than pongWait.
+	pingPeriod = (pongWait * 9) / 10
+
+	// Maximum message size allowed from peer.
+	maxMessageSize = 512
+)
+
+var (
+	newline = []byte{'\n'}
+	space   = []byte{' '}
+)
+
+type SourceMessage struct {
+	protocol.Message
+
+	source *Client
 }
 
 // Hub maintains the set of active clients and broadcasts messages to the
@@ -147,6 +176,10 @@ func (h *Hub) handleSubscribe(message *SourceMessage) error {
 	return nil
 }
 
+var (
+	errUnhandledTopic = errors.New("handleTopic: unhandled topic")
+)
+
 func (h *Hub) handlePublish(client *Client, topic string, unparsedData json.RawMessage) error {
 	if cb, ok := h.publishHandlers[topic]; ok {
 		return cb(client, unparsedData)
@@ -174,6 +207,121 @@ func (h *Hub) publish(message *protocol.OutgoingMessage) error {
 			subscription.client.send <- payload
 		}
 	}
+
+	return nil
+}
+
+func handlePing(client *Client, unparsedData json.RawMessage) error {
+	client.send <- protocol.PongBytes
+	return nil
+}
+
+type afkUser struct {
+	parameters *protocol.AFKParameters
+	time       time.Time
+}
+
+type AFKDatabase struct {
+	hub *Hub
+
+	usersMutex sync.Mutex
+	users      map[string]*afkUser
+}
+
+func (d *AFKDatabase) setUserAFK(parameters *protocol.AFKParameters) bool {
+	d.usersMutex.Lock()
+	defer d.usersMutex.Unlock()
+	if _, ok := d.users[parameters.UserID]; ok {
+		fmt.Println("User is already afk")
+		// User is already AFK
+		return false
+	}
+
+	d.users[parameters.UserID] = &afkUser{
+		parameters: parameters,
+		time:       time.Now(),
+	}
+
+	return true
+}
+
+func (d *AFKDatabase) setAFK(client *Client, unparsedData json.RawMessage) error {
+	var parameters protocol.AFKParameters
+	_ = json.Unmarshal(unparsedData, &parameters)
+
+	if !d.setUserAFK(&parameters) {
+		return nil
+	}
+
+	outboundMessage := &protocol.OutgoingMessage{
+		Type:  "PUBLISH",
+		Topic: "afk",
+		Data:  parameters,
+	}
+
+	go d.hub.publish(outboundMessage)
+
+	return nil
+}
+
+func (d *AFKDatabase) subscribeAFK(client *Client, subscriptionParameters SubscriptionParameter) error {
+	d.usersMutex.Lock()
+	defer d.usersMutex.Unlock()
+	for _, afkUser := range d.users {
+		outboundMessage := &protocol.OutgoingMessage{
+			Type:     "PUBLISH",
+			Topic:    "afk",
+			Historic: true,
+			Data:     afkUser.parameters,
+		}
+
+		bytes, _ := json.Marshal(outboundMessage)
+
+		client.send <- bytes
+	}
+
+	return nil
+}
+
+func (d *AFKDatabase) setBack(client *Client, unparsedData json.RawMessage) error {
+	d.usersMutex.Lock()
+	defer d.usersMutex.Unlock()
+
+	var setParameters protocol.BackSetParameters
+	_ = json.Unmarshal(unparsedData, &setParameters)
+
+	afkUser, ok := d.users[setParameters.UserID]
+	if !ok {
+		// User was not AFK to begin with
+		return nil
+	}
+	delete(d.users, setParameters.UserID)
+
+	afkParameters := afkUser.parameters
+
+	afkTimeInMilliseconds := utils.MaxInt64(0, int64(math.Ceil(float64(time.Since(afkUser.time).Nanoseconds())/1e6)))
+
+	parameters := protocol.BackParameters{
+		UserID:   setParameters.UserID,
+		UserName: setParameters.UserName,
+
+		ChannelID:   setParameters.ChannelID,
+		ChannelName: setParameters.ChannelName,
+
+		Reason: afkParameters.Reason,
+
+		AFKChannelID:   afkParameters.ChannelID,
+		AFKChannelName: afkParameters.ChannelName,
+
+		Duration: afkTimeInMilliseconds,
+	}
+
+	outboundMessage := &protocol.OutgoingMessage{
+		Type:  "PUBLISH",
+		Topic: "back",
+		Data:  parameters,
+	}
+	go d.hub.publish(outboundMessage)
 
 	return nil
 }
