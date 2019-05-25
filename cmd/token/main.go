@@ -9,7 +9,7 @@ import (
 
 	"github.com/lib/pq"
 	"github.com/pajlada/botsync/internal/dbhelp"
-	"github.com/pajlada/pajbot2/pkg/utils"
+	"github.com/pajbot/pajbot2/pkg/utils"
 )
 
 func generateAuthToken() (string, error) {
