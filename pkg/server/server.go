@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/pajlada/botsync/internal/config"
+	"github.com/pajbot/botsync/internal/config"
 	"github.com/pajlada/stupidmigration"
 )
 

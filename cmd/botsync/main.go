@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/pajlada/botsync/internal/dbhelp"
-	"github.com/pajlada/botsync/pkg/server"
+	"github.com/pajbot/botsync/internal/dbhelp"
+	"github.com/pajbot/botsync/pkg/server"
 )
 
 func main() {

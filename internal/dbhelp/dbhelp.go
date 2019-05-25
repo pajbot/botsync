@@ -3,7 +3,7 @@ package dbhelp
 import (
 	"database/sql"
 
-	"github.com/pajlada/botsync/internal/config"
+	"github.com/pajbot/botsync/internal/config"
 )
 
 func Connect() (*sql.DB, error) {

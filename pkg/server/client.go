@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/pajlada/botsync/pkg/protocol"
+	"github.com/pajbot/botsync/pkg/protocol"
 )
 
 // Client is a middleman between the websocket connection and the hub.

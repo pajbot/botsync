@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pajlada/botsync/pkg/client"
-	"github.com/pajlada/botsync/pkg/server"
+	"github.com/pajbot/botsync/pkg/client"
+	"github.com/pajbot/botsync/pkg/server"
 
 	_ "github.com/lib/pq"
 )

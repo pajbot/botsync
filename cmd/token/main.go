@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/lib/pq"
-	"github.com/pajlada/botsync/internal/dbhelp"
+	"github.com/pajbot/botsync/internal/dbhelp"
 	"github.com/pajbot/pajbot2/pkg/utils"
 )
 

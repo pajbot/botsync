@@ -12,8 +12,8 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/pajlada/botsync/pkg/client"
-	"github.com/pajlada/botsync/pkg/protocol"
+	"github.com/pajbot/botsync/pkg/client"
+	"github.com/pajbot/botsync/pkg/protocol"
 )
 
 var (

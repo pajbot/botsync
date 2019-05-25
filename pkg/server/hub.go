@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pajlada/botsync/pkg/protocol"
+	"github.com/pajbot/botsync/pkg/protocol"
 	"github.com/pajbot/pajbot2/pkg/utils"
 )
 
