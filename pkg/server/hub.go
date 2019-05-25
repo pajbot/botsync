@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/pajbot/botsync/pkg/protocol"
-	"github.com/pajbot/pajbot2/pkg/utils"
+	"github.com/pajbot/utils"
 )
 
 type SubscriptionParameter interface {
